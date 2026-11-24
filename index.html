@@ -563,9 +563,6 @@ function pages(s) {
 
   const st = D.PortfolioStressTestResults.filter(r => s.codes.includes(r.PortfolioCode) && !['GOS103', 'GOS900'].includes(r.PortfolioCode));
   const worst = [...st].sort((a, b) => a.ChangeDollar - b.ChangeDollar)[0], smax = Math.max(...st.map(r => Math.abs(r.ChangePercent)));
-  add(4, 'risk', 'Risk', {title: `In a repeat of 2008, ${worst.PortfolioCode} would lose ${money(-worst.ChangeDollar)}`, story: `Stress tests replay three shocks on today's holdings: the <b>2008 crisis</b>, rates <b>up 2 points</b>, and equities <b>down 20%</b>. ${hh ? 'Bond portfolios gain in a 2008 replay while equity-heavy ones take the hit.' : 'Steady Yield is mostly bonds, so a rate rise hurts more than an equity fall.'}`, tbl: 'dbo.PortfolioStressTestResults', row: 'One portfolio under one scenario',
-    body: `<div class="rows">${st.map(r => `<div class="rowv"><span>${esc(r.PortfolioCode)} · ${esc(r.Scenario.replace(' Financial Crisis', ''))}</span><div style="position:relative;height:16px;background:var(--soft);border-radius:8px"><div style="position:absolute;top:0;bottom:0;${r.ChangePercent < 0 ? 'right:50%' : 'left:50%'};width:${(Math.abs(r.ChangePercent) / smax * 50).toFixed(1)}%;background:${r.ChangePercent < 0 ? 'var(--neg)' : 'var(--green)'};border-radius:8px"></div><div style="position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:#8b8da0"></div></div><span class="v">${money(r.ChangeDollar)}</span></div>`).join('')}</div>`,
-    tech: tech('PortfolioStressTestResults.PortfolioCode → Portfolio · RiskAnalytics.SecurityKey → Security')});
 
   const ev = [];
   s.orders.forEach(o => o.OrderCreatedDateTime && ev.push([o.OrderCreatedDateTime.slice(0, 10), `${o.OrderId} placed: ${o.TransactionType} ${num(o.OrderedQuantity)} ${sec(o.SecurityKey).ShortName} (${o.OrderStatus})`]));
