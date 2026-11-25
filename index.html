@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FinIn Client Story</title>
+<title>FinIn Analytics Flow</title>
 <style>
 
 /* VOICE a guided story for leadership, gentle and readable
@@ -96,7 +96,7 @@ tr.dim td{color:var(--grey);text-decoration:line-through}
 .cap{font-size:17px;color:var(--grey);margin:24px 0 0;font-weight:700;font-style:italic}
 .cap+.scroll{border-top:1px solid var(--rule);border-radius:14px;margin-top:8px}
 .role{display:inline-block;padding:2px 12px;font-size:15px;font-weight:700;border-radius:999px;background:var(--soft);white-space:nowrap}
-.role.OWN{background:#def3ea}.role.POA{background:#fdeadf}.role.TRS{background:#e2effb}.role.BEN{background:#fbf2d3}.role.ACT{background:#f9e3eb}.role.AUTH{background:#ebe6fa}
+.role.OWN,.role.COOWN{background:#def3ea}.role.POA{background:#fdeadf}.role.TRS{background:#e2effb}.role.BEN{background:#fbf2d3}.role.ACT{background:#f9e3eb}.role.AUTH{background:#ebe6fa}
 .chain{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:20px}
 .chain div{padding:12px 14px;border-radius:14px;background:var(--card);border:1px solid var(--rule);font-size:16px;position:relative}
 .chain div b{display:block;font-size:14px;color:var(--grey);font-style:italic}
@@ -161,6 +161,12 @@ tr.dim td{color:var(--grey);text-decoration:line-through}
 .pfblock{background:var(--card);border:1px solid var(--rule);border-radius:18px;padding:16px 18px;margin-top:14px}
 .pfblock.hl{border:2px solid var(--red)}
 .raw summary{cursor:pointer;font-weight:700;margin-top:10px}
+.qb{margin-top:14px}
+.qh{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-weight:700;font-size:16px}
+.qh .cpy{margin-left:auto;min-height:32px;padding:0 14px;border-radius:999px;border:1.5px solid var(--line);background:var(--card);font-size:14px}
+.qnote{font-size:15px;color:var(--grey);font-style:italic;margin-top:4px}
+.plist{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.plist>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 
 .tree2,.tree2 ul{list-style:none;margin:0;padding:0}
 .tree2 ul{margin-left:26px;border-left:2px solid var(--line);padding-left:0}
@@ -320,6 +326,8 @@ const one = (t, k, v) => D[t].find(r => r[k] == v) || {};
 const uniq = a => [...new Set(a)];
 const sum = (a, f) => a.reduce((s, x) => s + (f(x) || 0), 0);
 const dt = s => s ? new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('en-US', {day: 'numeric', month: 'short', year: 'numeric'}) : '';
+const PERM = {decide: ['Make investment decisions', ['OWN', 'COOWN', 'TRS', 'POA']], sign: ['Sign on the owner\'s behalf', ['POA', 'TRS']], reports: ['Receive statements', ['OWN', 'COOWN', 'TRS', 'ACT']], benefit: ['Benefit from the money', ['OWN', 'COOWN', 'BEN']]};
+const ROLEMEAN = {OWN: 'Legally owns the assets in the account', COOWN: 'Owns the assets jointly with the owner', TRS: 'Manages the trust\'s assets on the trust\'s behalf; does not own them', BEN: 'Will benefit from the trust; no control over it now', POA: 'Allowed to act on the owner\'s behalf', AUTH: 'Signs instructions for an organisation', ACT: 'An outside professional who only receives statement copies, with no authority'};
 const ROLE = {COOWN:'Co-owner', OWN:'Owner', POA:'Power of attorney', TRS:'Trustee', BEN:'Beneficiary', ACT:'Accountant (copies)', AUTH:'Authorised signatory'};
 const CTYPE = {IND:'Individual', ORG:'Organisation', PRO:'Outside professional'};
 const TTYPE = {BUY:'Buy', SELL:'Sell', DIV:'Dividend', INT:'Interest', FEE:'Fee', DEP:'Deposit', SUB:'Fund subscription', WD:'Withdrawal'};
@@ -341,7 +349,7 @@ const ledger = rows => `<div class="ledger">${rows.map(r => `<div class="lrow ${
 function table(cols, rows) {
   return `<div class="scroll" style="border-top:1px solid var(--rule);border-radius:12px"><table class="stack"><thead><tr>${cols.map(c => `<th class="${c.n ? 'n' : ''}">${esc(c.h)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => '<tr>' + cols.map(c => { const v = c.f ? c.f(r) : r[c.k]; return `<td class="${c.n ? 'n' : ''}" data-l="${esc(c.h)}">${esc(v)}</td>`; }).join('') + '</tr>').join('')}</tbody></table></div>`;
 }
-const tech = (keys, raw, sql) => `<div class="tech"><b>Join keys</b><br>${keys}${sql ? `<pre>${esc(sql)}</pre>` : ''}${raw ? `<details class="raw"><summary>Show the rows as stored</summary>${raw}</details>` : ''}</div>`;
+const tech = (keys, raw, sql) => `<div class="tech"><b>Join keys</b><br>${keys}<!--Q-->${sql ? `<pre>${esc(sql)}</pre>` : ''}${raw ? `<details class="raw"><summary>Show the rows as stored</summary>${raw}</details>` : ''}</div>`;
 
 // ---------- scope ----------
 function scope(kind) {
@@ -436,14 +444,682 @@ function simSteps(s, L) {
 }
 
 // ---------- pages ----------
+// ---------- Data view queries (Silver Lakehouse, schema dbo) ----------
+function queries(s) {
+  const hh = s.kind === 'household', B = life(s, s.buy);
+  const clRow = one('Client', 'ClientKey', s.clients[0]), CC = clRow.Code;
+  const IN = s.codes.map(c => `'${c}'`).join(', ');
+  const PIDS = s.contacts.map(c => `'${c.PersonId}'`).join(', ');
+  const AS = '2026-09-30';
+  const q = (doc, t, sql, note) => ({t, sql: sql.trim(), note});
+  const Q = {};
+
+  Q.meet = [q(0, 'The relationship, step by step: client, household, people, roles, accounts and portfolios', `
+SELECT c.Code                    AS Client_Code,
+       c.Name                    AS Client_Name,
+       h.Household_Name,
+       ct.Person_Id,
+       ct.First_Name,
+       ct.Last_Name,
+       ct.Is_Client,
+       ca.Portfolio_Contact_Assignment_Type_Descri AS Role,
+       a.AccountId,
+       p.PortfolioCode,
+       p.LongName                AS Portfolio_Name
+FROM      dbo.Client          c
+JOIN      dbo.Account         a   ON a.ClientKey     = c.ClientKey
+JOIN      dbo.Contact_Account ca  ON ca.Account_Key  = a.AccountKey
+JOIN      dbo.Contact         ct  ON ct.Person_Id    = ca.Contact_Id
+JOIN      dbo.Portfolio       p   ON p.PortfolioKey  = ca.Portfolio_Id
+LEFT JOIN dbo.HouseHold       h   ON h.Household_Key = ct.Household_Key
+WHERE c.Code = '${CC}'
+ORDER BY a.AccountId, ct.Person_Id;`)];
+
+  Q.household = hh ? [
+    q(0, 'Households of this family and their members (Household_Member bridge)', `
+SELECT h.Household_Key,
+       h.Household_Name,
+       hm.Person_Id,
+       ct.First_Name,
+       ct.Last_Name,
+       hm.Household_Role,
+       hm.Is_Primary_Household
+FROM dbo.HouseHold        h
+JOIN dbo.Household_Member hm ON hm.Household_Key = h.Household_Key
+JOIN dbo.Contact          ct ON ct.Person_Id     = hm.Person_Id
+WHERE h.Household_Key IN (SELECT m.Household_Key
+                          FROM dbo.Household_Member m
+                          JOIN dbo.Contact x ON x.Person_Id = m.Person_Id
+                          WHERE x.Client_Key = ${clRow.ClientKey})
+ORDER BY h.Household_Key, hm.Is_Primary_Household DESC, hm.Person_Id;`),
+    q('section 1', 'Household → Contact → Contact_Account → Account → Client', `
+SELECT DISTINCT
+       h.Household_Name,
+       ct.Person_Id,
+       ct.First_Name,
+       ct.Last_Name,
+       ct.Contact_Type_Code,
+       ct.Is_Client,
+       ca.Portfolio_Contact_Assignment_Type_Descri AS Role,
+       a.AccountId,
+       a.Name   AS Account_Name,
+       c.ClientKey,
+       c.Name   AS Client_Name
+FROM      dbo.Contact         ct
+LEFT JOIN dbo.HouseHold       h  ON h.Household_Key = ct.Household_Key
+LEFT JOIN dbo.Contact_Account ca ON ca.Contact_Id   = ct.Person_Id
+LEFT JOIN dbo.Account         a  ON a.AccountKey    = ca.Account_Key
+LEFT JOIN dbo.Client          c  ON c.ClientKey     = a.ClientKey
+WHERE ct.Person_Id IN (${PIDS})
+ORDER BY h.Household_Name, ct.Person_Id, a.AccountId;`, 'Filtered to this family\'s contacts. This version reads the primary household from Contact.Household_Key.'),
+    q(0, 'Household fee benefit: billing group total and the tiered annual fee', `
+WITH grp AS (
+    SELECT bd.Billing_Group_Code,
+           SUM(au.Closing_Value) AS Group_Value
+    FROM dbo.Billing_Details bd
+    JOIN dbo.AUM au ON au.Portfolio_Code = bd.Portfolio_Code
+                   AND au.Effective_Date = '${AS}'
+    WHERE bd.Billing_Group_Code = 'HH-ABRAHAM'
+    GROUP BY bd.Billing_Group_Code),
+tiers AS (
+    SELECT Fee_Component_Rate       AS Rate,
+           LAG(Fee_Component_Upper_Bound, 1, 0)
+               OVER (ORDER BY COALESCE(Fee_Component_Upper_Bound, 1e18)) AS Lower_Bound,
+           Fee_Component_Upper_Bound AS Upper_Bound
+    FROM dbo.Billing_Profile
+    WHERE Profile_Code = 'STD-TIER')
+SELECT g.Billing_Group_Code,
+       g.Group_Value,
+       SUM((CASE WHEN t.Upper_Bound IS NULL OR g.Group_Value < t.Upper_Bound
+                 THEN g.Group_Value ELSE t.Upper_Bound END - t.Lower_Bound) * t.Rate) AS Annual_Fee
+FROM grp g
+JOIN tiers t ON g.Group_Value > t.Lower_Bound
+GROUP BY g.Billing_Group_Code, g.Group_Value;`)
+  ] : [
+    q('section 1', 'Household → Contact: Emily has no household', `
+SELECT ct.Person_Id,
+       ct.First_Name,
+       ct.Last_Name,
+       ct.Household_Key,
+       h.Household_Name
+FROM      dbo.Contact   ct
+LEFT JOIN dbo.HouseHold h ON h.Household_Key = ct.Household_Key
+WHERE ct.Person_Id = 'P3001';`, 'Household_Key and Household_Name come back NULL.'),
+    q(0, 'Confirm she is in no Household_Member row', `
+SELECT COUNT(*) AS Household_Rows
+FROM dbo.Household_Member
+WHERE Person_Id = 'P3001';`)
+  ];
+
+  Q.people = [
+    q('section 1 (variant)', 'Each contact and their own client (empty for non-clients)', `
+SELECT ct.Person_Id, ct.First_Name, ct.Last_Name, ct.Is_Client, c.Name AS Own_Client
+FROM      dbo.Contact ct
+LEFT JOIN dbo.Client  c ON c.ClientKey = ct.Client_Key
+WHERE ct.Person_Id IN (${PIDS})
+ORDER BY ct.Person_Id;`),
+    q(0, 'Contact details: type, association, correspondence name and household', `
+SELECT ct.Person_Id,
+       ct.First_Name,
+       ct.Last_Name,
+       ct.Contact_Type_Code,
+       ct.Association_Type_Code,
+       ct.Is_Client,
+       ct.Correspondence_Name,
+       h.Household_Name
+FROM      dbo.Contact   ct
+LEFT JOIN dbo.HouseHold h ON h.Household_Key = ct.Household_Key
+WHERE ct.Person_Id IN (${PIDS})
+ORDER BY ct.Person_Id;`)];
+
+  Q.roles = [
+    q('section 2', 'Contact → Contact_Account → Account → AccountPortfolio → Portfolio', `
+SELECT ct.Person_Id,
+       ct.First_Name,
+       ct.Last_Name,
+       ca.Portfolio_Contact_Assignment_Type_Descri AS Role,
+       ca.Portfolio_Contact_Assignment_Percentage  AS Role_Pct,
+       a.AccountId,
+       a.Name        AS Account_Name,
+       p.PortfolioCode,
+       p.LongName    AS Portfolio_Name,
+       p.PortfolioType
+FROM dbo.Contact          ct
+JOIN dbo.Contact_Account  ca ON ca.Contact_Id  = ct.Person_Id
+JOIN dbo.Account          a  ON a.AccountKey   = ca.Account_Key
+JOIN dbo.AccountPortfolio ap ON ap.AccountKey  = a.AccountKey
+                            AND ap.PortfolioKey = ca.Portfolio_Id
+JOIN dbo.Portfolio        p  ON p.PortfolioKey = ap.PortfolioKey
+WHERE a.ClientKey = ${clRow.ClientKey}
+ORDER BY ct.Person_Id, a.AccountId, p.PortfolioCode;`, 'Filtered to this client. ap.PortfolioKey = ca.Portfolio_Id keeps each role on its own portfolio.'),
+    q(0, 'Roles by person, in one line each', `
+SELECT ct.Person_Id,
+       ct.First_Name,
+       ct.Last_Name,
+       COUNT(*) AS Roles,
+       STRING_AGG(CONCAT(ca.Portfolio_Contact_Assignment_Type_Descri, ' – ', p.PortfolioCode, ' · ', a.AccountId), '; ') AS Role_List
+FROM dbo.Contact         ct
+JOIN dbo.Contact_Account ca ON ca.Contact_Id  = ct.Person_Id
+JOIN dbo.Account         a  ON a.AccountKey   = ca.Account_Key
+JOIN dbo.Portfolio       p  ON p.PortfolioKey = ca.Portfolio_Id
+WHERE ct.Person_Id IN (${PIDS})
+GROUP BY ct.Person_Id, ct.First_Name, ct.Last_Name
+ORDER BY ct.Person_Id;`, hh ? 'Not limited to this client, so Abraham\'s power of attorney on ACC-106 and Isaac\'s ownership of ACC-105 also show.' : undefined)];
+
+  Q.client = [q(0, 'The client, its owners and its accounts', `
+SELECT c.ClientKey,
+       c.Code,
+       c.Name,
+       c.ShortName,
+       c.LongName,
+       (SELECT STRING_AGG(CONCAT(ct.First_Name, ' ', COALESCE(ct.Last_Name, '')), ', ')
+        FROM dbo.Contact ct WHERE ct.Client_Key = c.ClientKey) AS Owners,
+       (SELECT STRING_AGG(a.AccountId, ', ')
+        FROM dbo.Account a WHERE a.ClientKey = c.ClientKey)    AS Accounts
+FROM dbo.Client c
+WHERE c.Code = '${CC}';`)];
+
+  Q.accounts = [
+    q('section 3', 'Account → AccountPortfolio → Portfolio → Plan', `
+SELECT a.AccountId,
+       a.Name           AS Account_Name,
+       pl.Name          AS Plan_Name,
+       p.PortfolioCode,
+       p.LongName       AS Portfolio_Name,
+       p.PortfolioType,
+       ap.IsActive      AS Link_Active
+FROM      dbo.Account          a
+JOIN      dbo.AccountPortfolio ap ON ap.AccountKey  = a.AccountKey
+JOIN      dbo.Portfolio        p  ON p.PortfolioKey = ap.PortfolioKey
+LEFT JOIN dbo.[Plan]           pl ON pl.PlanKey     = a.PlanKey
+WHERE a.ClientKey = ${clRow.ClientKey}
+ORDER BY a.AccountId, p.PortfolioCode;`, 'Filtered to this client.'),
+    q(0, 'Accounts with plan and custodian', `
+SELECT a.AccountId,
+       a.Name        AS Account_Name,
+       pl.Name       AS Plan_Name,
+       cu.Name       AS Custodian
+FROM      dbo.Account   a
+JOIN      dbo.[Plan]    pl ON pl.PlanKey     = a.PlanKey
+LEFT JOIN dbo.Custodian cu ON cu.CustodianKey = pl.CustodianKey
+WHERE a.ClientKey = ${clRow.ClientKey}
+ORDER BY a.AccountId;`)];
+
+  Q.portfolios = [
+    q('section 5', 'Portfolio: the client\'s portfolios', `
+SELECT PortfolioCode, LongName, PortfolioType, StrategyCode, PrimaryBenchmarkCode,
+       PortfolioGroupCode, InceptionDate, TerminationDate, IsActive
+FROM dbo.Portfolio
+WHERE PortfolioCode IN (${IN})
+ORDER BY PortfolioCode;`, 'Filtered to this client\'s portfolios.'),
+    q('section 4', 'Portfolio → Portfolio_Group_Mapping → Portfolio_Group', `
+SELECT g.Code      AS Group_Code,
+       g.Name      AS Group_Name,
+       p.PortfolioCode,
+       p.LongName  AS Portfolio_Name,
+       p.PortfolioType,
+       m.Is_Active
+FROM dbo.Portfolio_Group_Mapping m
+JOIN dbo.PortfolioGroup g ON g.PortfolioGroupKey = m.Portfolio_Group_Key
+JOIN dbo.Portfolio      p ON p.PortfolioKey      = m.Portfolio_Key
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY g.Code, p.PortfolioCode;`),
+    q(0, 'Each portfolio with strategy, benchmark, reporting group and billing group', `
+SELECT p.PortfolioCode,
+       p.LongName,
+       p.PortfolioType,
+       st.Name             AS Strategy,
+       b.BenchmarkName     AS Benchmark,
+       p.PortfolioGroupCode,
+       bd.Billing_Group_Code
+FROM      dbo.Portfolio       p
+LEFT JOIN dbo.Strategy        st  ON st.Code           = p.StrategyCode
+LEFT JOIN dbo.Benchmark       b   ON b.BenchmarkCode   = p.PrimaryBenchmarkCode
+LEFT JOIN dbo.Billing_Details bd  ON bd.Portfolio_Code = p.PortfolioCode
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY p.PortfolioCode;`)];
+
+  if (hh) {
+    Q.fund = [
+      q('section 7', 'Portfolio → Product → ShareClass (→ performance)', `
+WITH last_day AS (SELECT MAX(As_Of_Date) AS d FROM dbo.Shareclass_Performance)
+SELECT p.PortfolioCode,
+       p.LongName        AS Fund_Name,
+       pr.Product_Name,
+       sc.Share_Class_Key,
+       sc.Share_Class_Name,
+       sc.Expense_Ratio,
+       sc.Min_Investment,
+       sp.As_Of_Date,
+       sp.Gross_Nav,
+       sp.Gross_1_Month,
+       sp.Net_1_Month
+FROM      dbo.Portfolio              p
+JOIN      dbo.Product                pr ON pr.Portfolio_Key = p.PortfolioKey
+JOIN      dbo.ShareClass             sc ON sc.Product_Key   = pr.Product_Key
+LEFT JOIN dbo.Shareclass_Performance sp ON sp.Shareclass_Key = sc.Share_Class_Key
+                                       AND sp.As_Of_Date     = (SELECT d FROM last_day)
+ORDER BY sc.Share_Class_Key;`),
+      q(0, 'The fund product and its share classes, with the fund portfolio behind them', `
+SELECT pr.Product_Id,
+       pr.Product_Name,
+       pr.Cusip           AS Fund_Cusip,
+       sc.Share_Class_Key,
+       sc.Share_Class_Name,
+       sc.Cusip           AS Share_Class_Cusip,
+       sc.Expense_Ratio,
+       sc.Min_Investment,
+       p.PortfolioCode    AS Fund_Portfolio,
+       p.LongName         AS Fund_Name
+FROM dbo.Product    pr
+JOIN dbo.ShareClass sc ON sc.Product_Key  = pr.Product_Key
+JOIN dbo.Portfolio  p  ON p.PortfolioKey  = pr.Portfolio_Key
+ORDER BY sc.Share_Class_Key;`)];
+    Q.sleeves = [
+      q('section 6', 'Master → Sleeves → Holdings', `
+SELECT m.PortfolioCode      AS Master_Code,
+       m.LongName           AS Master_Name,
+       ms.Sleeve_Id,
+       sl.PortfolioCode     AS Sleeve_Code,
+       sl.LongName          AS Sleeve_Name,
+       SUM(pos.MarketValue) AS Sleeve_Market_Value,
+       SUM(SUM(pos.MarketValue))
+           OVER (PARTITION BY m.PortfolioCode) AS Master_Market_Value
+FROM      dbo.Master_SubPortfolio ms
+JOIN      dbo.Portfolio m   ON m.PortfolioKey  = ms.Master_Portfolio_Key
+JOIN      dbo.Portfolio sl  ON sl.PortfolioKey = ms.Sub_Portfolio_Key
+LEFT JOIN dbo.Position  pos ON pos.PortfolioKey = sl.PortfolioKey
+                           AND pos.AsOfDate     = '${AS}'
+WHERE m.PortfolioCode = 'GOS103'
+GROUP BY m.PortfolioCode, m.LongName, ms.Sleeve_Id, sl.PortfolioCode, sl.LongName
+ORDER BY Master_Code, Sleeve_Code;`, 'Filtered to GOS103 and to 30 Sep 2026, because Position has one row per day.')];
+  }
+
+  const PF_KEYS = `SELECT PortfolioKey FROM dbo.Portfolio WHERE PortfolioCode IN (${IN})`;
+  Q.order = [q(0, 'Orders for this client\'s portfolios, with the security from the allocation', `
+SELECT o.Order_Id,
+       o.Transaction_Type,
+       o.Order_Type,
+       o.Order_Status,
+       o.Ordered_Quantity,
+       o.Ordered_Amount,
+       o.Order_Reference,
+       po.Order_Id        AS Parent_Order_Id,
+       p.PortfolioCode,
+       s.ShortName        AS Security_Name,
+       oa.Target_Quantity
+FROM      dbo.[Order]          o
+LEFT JOIN dbo.[Order]          po ON po.Order_Key   = o.Parent_Order_Key
+LEFT JOIN dbo.Order_Allocation oa ON oa.Order_Key   = o.Order_Key
+LEFT JOIN dbo.Portfolio        p  ON p.PortfolioKey = oa.Portfolio_Key
+LEFT JOIN dbo.Security         s  ON s.SecurityKey  = oa.Security_Key
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY o.Order_Key, p.PortfolioCode;`, 'Order has no security key; the security comes from Order_Allocation. A block order returns one row per portfolio.')];
+
+  Q.execution = [q(0, 'Executions (block level) for this client\'s portfolios', `
+SELECT DISTINCT
+       t.Trade_Id,
+       t.Trade_Block_Id,
+       s.ShortName        AS Security_Name,
+       t.Quantity,
+       t.Execution_Price,
+       t.Net_Amount,
+       t.Trade_Date,
+       t.Settlement_Date
+FROM dbo.Trade            t
+JOIN dbo.Order_Allocation oa ON oa.Trade_Key  = t.Trade_Key
+JOIN dbo.Portfolio        p  ON p.PortfolioKey = oa.Portfolio_Key
+JOIN dbo.Security         s  ON s.SecurityKey  = t.Security_Key
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY t.Trade_Date, t.Trade_Id;`)];
+
+  Q.allocation = [q(0, 'Planned split (Order_Allocation) next to booked versions (Trade_Allocation)', `
+SELECT oa.Order_Id,
+       oa.Account_Code,
+       p.PortfolioCode,
+       oa.Target_Quantity,
+       oa.Target_Pct,
+       oa.Target_Amount,
+       oa.Executed_Quantity,
+       ta.Trade_Version,
+       ta.Is_Current,
+       ta.Quantity          AS Booked_Quantity,
+       ta.Principal_Amount,
+       ta.Net_Money_Local,
+       ta.Settlement_Date,
+       ta.Trade_Comments
+FROM      dbo.Order_Allocation oa
+JOIN      dbo.Portfolio        p  ON p.PortfolioKey = oa.Portfolio_Key
+LEFT JOIN dbo.Trade_Allocation ta ON ta.Order_Allocation_Key = oa.Order_Allocation_Key
+                                 AND ta.Trade_Key = oa.Trade_Key
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY oa.Order_Id, p.PortfolioCode, ta.Trade_Version;`, 'Use only rows with Is_Current = 1 for reporting; older versions are kept for audit.')];
+
+  Q.security = [q(0, 'Securities this client holds, with their asset class', `
+SELECT DISTINCT
+       s.SecurityKey,
+       s.ShortName,
+       s.LongName,
+       s.Name,
+       s.SectorGICS,
+       ac.Name         AS Asset_Class,
+       cac.Name        AS Customer_Asset_Class
+FROM      dbo.Position           pos
+JOIN      dbo.Portfolio          p   ON p.PortfolioKey = pos.PortfolioKey
+JOIN      dbo.Security           s   ON s.SecurityKey  = pos.SecurityKey
+LEFT JOIN dbo.LinkAssetClass     lac ON lac.LinkAssetClassKey = s.LinkAssetClassKey
+LEFT JOIN dbo.AssetClass         ac  ON ac.Code  = lac.AssetClassCode
+LEFT JOIN dbo.CustomerAssetClass cac ON cac.Code = lac.CustomerAssetClassCode
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY s.SecurityKey;`)];
+
+  Q.position = [q('section 9', 'Portfolio → Account → Position → Security, one day (latest)', `
+WITH last_day AS (SELECT MAX(AsOfDate) AS d FROM dbo.Position)
+SELECT p.PortfolioCode,
+       p.LongName     AS Portfolio_Name,
+       p.PortfolioType,
+       a.AccountId,
+       a.Name         AS Account_Name,
+       s.ShortName    AS Security_Name,
+       pos.AsOfDate,
+       pos.Quantity,
+       pos.MarketPrice,
+       pos.MarketValue
+FROM      dbo.Portfolio        p
+JOIN      dbo.AccountPortfolio ap  ON ap.PortfolioKey = p.PortfolioKey
+JOIN      dbo.Account          a   ON a.AccountKey    = ap.AccountKey
+LEFT JOIN dbo.Position         pos ON pos.PortfolioKey = p.PortfolioKey
+                                  AND pos.AsOfDate     = (SELECT d FROM last_day)
+LEFT JOIN dbo.Security         s   ON s.SecurityKey   = pos.SecurityKey
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY p.PortfolioCode, a.AccountId, s.ShortName;`, 'Filtered to this client. To see another day, replace (SELECT d FROM last_day) with a date such as \'2026-09-30\'.')];
+
+  Q.holdings = [
+    q('section 9', 'What each portfolio holds (no dates)', `
+SELECT DISTINCT p.PortfolioCode, a.AccountId, s.ShortName AS Security_Name
+FROM dbo.Portfolio        p
+JOIN dbo.AccountPortfolio ap  ON ap.PortfolioKey = p.PortfolioKey
+JOIN dbo.Account          a   ON a.AccountKey    = ap.AccountKey
+JOIN dbo.Position         pos ON pos.PortfolioKey = p.PortfolioKey
+JOIN dbo.Security         s   ON s.SecurityKey   = pos.SecurityKey
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY p.PortfolioCode, a.AccountId, Security_Name;`),
+    q(0, 'Holdings on 30 Sep 2026 with each security\'s weight and the portfolio total', `
+SELECT p.PortfolioCode,
+       s.ShortName       AS Security_Name,
+       pos.Quantity,
+       pos.MarketValue,
+       100.0 * pos.MarketValue
+             / SUM(pos.MarketValue) OVER (PARTITION BY p.PortfolioCode) AS Weight_Pct,
+       SUM(pos.MarketValue) OVER (PARTITION BY p.PortfolioCode)       AS Portfolio_Total
+FROM dbo.Position  pos
+JOIN dbo.Portfolio p ON p.PortfolioKey = pos.PortfolioKey
+JOIN dbo.Security  s ON s.SecurityKey  = pos.SecurityKey
+WHERE pos.AsOfDate = '${AS}'
+  AND p.PortfolioCode IN (${IN})
+ORDER BY p.PortfolioCode, pos.MarketValue DESC;`)];
+
+  const flow = where => `
+SELECT o.Order_Id,
+       o.Order_Status,
+       o.Transaction_Type,
+       o.Ordered_Quantity,
+       po.Order_Id              AS Parent_Order_Id,
+       oa.Account_Code,
+       oa.Executed_Quantity     AS Allocated_Qty,
+       t.Trade_Id,
+       t.Execution_Price,
+       t.Net_Amount             AS Trade_Net_Amount,
+       ta.Trade_Version,
+       ta.Is_Current,
+       ta.Net_Money_Local       AS Allocation_Net_Money,
+       tx.TransactKey,
+       tx.TradeType,
+       tx.NetAmountLocal        AS Transaction_Net_Amount,
+       p.PortfolioCode,
+       s.ShortName              AS Security_Name,
+       t.Trade_Date,
+       t.Settlement_Date
+FROM dbo.[Order] o
+LEFT JOIN dbo.[Order]          po ON po.Order_Key = o.Parent_Order_Key
+LEFT JOIN dbo.Order_Allocation oa ON oa.Order_Key = o.Order_Key
+LEFT JOIN dbo.Trade            t  ON t.Trade_Key  = oa.Trade_Key
+LEFT JOIN dbo.Trade_Allocation ta ON ta.Order_Allocation_Key = oa.Order_Allocation_Key
+                                 AND ta.Trade_Key = t.Trade_Key
+LEFT JOIN dbo.Transact         tx ON ta.Is_Current = 1
+                                 AND tx.PortfolioKey = ta.Portfolio_Key
+                                 AND tx.SecurityKey  = ta.Security_Key
+                                 AND tx.TradeDate    = ta.Trade_Date
+                                 AND tx.Quantity     = ta.Quantity
+                                 AND tx.TradeType    = UPPER(ta.Transaction_Type)
+LEFT JOIN dbo.Portfolio p ON p.PortfolioKey = oa.Portfolio_Key
+LEFT JOIN dbo.Security  s ON s.SecurityKey  = COALESCE(oa.Security_Key, t.Security_Key)
+${where}
+ORDER BY o.Order_Key, oa.Order_Allocation_Key, ta.Trade_Version;`;
+
+  Q.transaction = [
+    q(0, 'The portfolio ledger: every transaction for this client', `
+SELECT tx.TransactKey,
+       tx.TradeDate,
+       tx.SettlementDate,
+       p.PortfolioCode,
+       tx.TradeType,
+       s.ShortName         AS Security_Name,
+       tx.Quantity,
+       tx.PriceLocal,
+       tx.PriceBase,
+       tx.PriceUSD,
+       tx.NetAmountLocal,
+       tx.ReportedDate
+FROM      dbo.Transact  tx
+JOIN      dbo.Portfolio p ON p.PortfolioKey = tx.PortfolioKey
+LEFT JOIN dbo.Security  s ON s.SecurityKey  = tx.SecurityKey
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY tx.TradeDate, tx.TransactKey;`),
+    q('section 8', `Order → Order_Allocation → Trade → Trade_Allocation → Transact for ${B.O.OrderId}`, flow(`WHERE o.Order_Id = '${B.O.OrderId}'`), 'Filtered to this page\'s order. Transact is matched on portfolio, security, trade date, quantity and buy/sell.')];
+
+  Q.cashentry = [q(0, 'Cash entries, the transaction behind each, and reversals', `
+SELECT ce.Cash_Entry_Id,
+       ce.Cash_Account_Code,
+       ce.Cash_Entry_Type,
+       ce.Value_Date,
+       ce.Net_Cash_Amount,
+       ce.Cash_Narrative,
+       ce.Manual_Adjustment_Flag,
+       rv.Cash_Entry_Id   AS Reverses_Entry,
+       tx.TransactKey,
+       tx.TradeType
+FROM      dbo.Cash_Entry ce
+JOIN      dbo.Portfolio  p  ON p.PortfolioKey   = ce.Portfolio_Key
+LEFT JOIN dbo.Transact   tx ON tx.TransactKey   = ce.Transact_Key
+LEFT JOIN dbo.Cash_Entry rv ON rv.Cash_Entry_Key = ce.Reversal_Of_Cash_Entry_Key
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY ce.Value_Date, ce.Cash_Entry_Id;`)];
+
+  Q.cashbalance = [
+    q(0, 'Daily cash balance per account, with a check that it adds up', `
+SELECT cb.Cash_Account_Code,
+       cb.As_Of_Date,
+       cb.Opening_Balance,
+       cb.Cash_In_Amount,
+       cb.Cash_Out_Amount,
+       cb.Closing_Balance,
+       cb.Opening_Balance + cb.Cash_In_Amount - cb.Cash_Out_Amount
+           - cb.Closing_Balance AS Check_Difference   -- should be 0
+FROM dbo.Cash_Balances cb
+JOIN dbo.Portfolio     p ON p.PortfolioKey = cb.Portfolio_Key
+WHERE p.PortfolioCode IN (${IN})
+ORDER BY cb.Cash_Account_Code, cb.As_Of_Date;`),
+    ...(hh ? [q(0, 'Sale proceeds credited to the IRA\'s cash account', `
+SELECT ce.Cash_Entry_Id,
+       ce.Value_Date,
+       ce.Net_Cash_Amount,
+       tx.TransactKey,
+       tx.Quantity,
+       tx.PriceLocal,
+       tx.GainLossLocal   AS Realised_Gain
+FROM dbo.Cash_Entry ce
+JOIN dbo.Transact   tx ON tx.TransactKey = ce.Transact_Key
+WHERE ce.Cash_Account_Code = 'GOS102-USD'
+  AND tx.TradeType = 'SELL'
+ORDER BY ce.Value_Date;`)] : [])];
+
+  Q.aum = [
+    q(0, 'September AUM per portfolio: opening, flows, income, fees, closing', `
+SELECT a.Portfolio_Code,
+       a.Advisor,
+       a.Opening_Value,
+       a.Flows_In,
+       a.Flows_Out,
+       a.Dividends,
+       a.Interest,
+       a.Fees,
+       a.Closing_Value,
+       a.Closing_Value - a.Opening_Value - a.Flows_In + a.Flows_Out AS Markets_And_Income
+FROM dbo.AUM a
+WHERE a.Effective_Date = '${AS}'
+  AND a.Portfolio_Code IN (${IN})
+ORDER BY a.Portfolio_Code;`),
+    q(0, 'Total for the client (the bridge on this page)', `
+SELECT SUM(a.Opening_Value)                    AS Opening,
+       SUM(a.Flows_In - a.Flows_Out)           AS Net_Flows,
+       SUM(a.Closing_Value - a.Opening_Value
+           - a.Flows_In + a.Flows_Out)          AS Markets_And_Income,
+       SUM(a.Closing_Value)                    AS Closing
+FROM dbo.AUM a
+WHERE a.Effective_Date = '${AS}'
+  AND a.Portfolio_Code IN (${IN});`)];
+
+  Q.benchmark = [q(0, 'Each portfolio against its own benchmark, all periods', `
+SELECT p.PortfolioCode,
+       b.BenchmarkName,
+       pp.Return_1Month,  bp.Return_1Month  AS Bench_1Month,
+       pp.Return_3Months, bp.Return_3Months AS Bench_3Months,
+       pp.Return_1Year,   bp.Return_1Year   AS Bench_1Year,
+       pp.Return_3Years,  bp.Return_3Years  AS Bench_3Years,
+       pp.Return_1Year - bp.Return_1Year    AS Excess_1Year
+FROM dbo.PortfolioPerformance  pp
+JOIN dbo.Portfolio             p  ON p.PortfolioCode   = pp.PortfolioCode
+JOIN dbo.Benchmark             b  ON b.BenchmarkCode   = p.PrimaryBenchmarkCode
+JOIN dbo.Benchmark_Performance bp ON bp.BenchmarkKey   = b.BenchmarkKey
+                                 AND bp.PerformanceDate = pp.PerformanceDate
+WHERE pp.PerformanceDate = '${AS}'
+  AND p.PortfolioCode IN (${IN})
+ORDER BY p.PortfolioCode;`)];
+
+  Q.billing = [
+    q(0, 'Who is billed where: billing group, bill-to portfolio and fee schedule', `
+SELECT bd.Portfolio_Code,
+       bd.Bill_To_Portfolio,
+       bd.Master_Portfolio_Code,
+       bd.Billing_Group_Code,
+       bd.Billing_Profile_Code,
+       bd.Billing_Profile_Description,
+       bd.Start_Date
+FROM dbo.Billing_Details bd
+WHERE bd.Portfolio_Code IN (${IN})
+ORDER BY bd.Portfolio_Code, bd.Start_Date;`),
+    q(0, 'Q3 2026 invoices', `
+SELECT bi.Invoice_Number,
+       bi.Portfolio_Code   AS Billed_To,
+       bi.Billing_From_Date,
+       bi.Billing_To_Date,
+       bi.Market_Value,
+       bi.Calculated_Fees,
+       bi.Discount_Amount,
+       bi.Invoice_Amount,
+       bi.Invoice_Status,
+       bi.RR_Description   AS Advisor
+FROM dbo.Billing_Invoice bi
+WHERE bi.Billing_To_Date = '${AS}'
+  AND ${hh ? "bi.Billing_Group_Code = 'HH-ABRAHAM'" : `bi.Portfolio_Code IN (${IN})`}
+ORDER BY bi.Invoice_Number;`)];
+
+  Q.tree = [
+    q(0, 'The business hierarchy, one row per portfolio', `
+SELECT c.Name              AS Client,
+       a.AccountId,
+       pl.Name             AS Plan_Name,
+       cu.Name             AS Custodian,
+       p.PortfolioCode,
+       p.PortfolioType,
+       mp.PortfolioCode    AS Master_Portfolio,
+       st.Name             AS Strategy,
+       b.BenchmarkName     AS Benchmark,
+       pg.Name             AS Reporting_Group,
+       bd.Billing_Group_Code
+FROM      dbo.Client              c
+JOIN      dbo.Account             a   ON a.ClientKey      = c.ClientKey
+JOIN      dbo.[Plan]              pl  ON pl.PlanKey       = a.PlanKey
+LEFT JOIN dbo.Custodian           cu  ON cu.CustodianKey  = pl.CustodianKey
+JOIN      dbo.AccountPortfolio    ap  ON ap.AccountKey    = a.AccountKey
+JOIN      dbo.Portfolio           p   ON p.PortfolioKey   = ap.PortfolioKey
+LEFT JOIN dbo.Master_SubPortfolio ms  ON ms.Sub_Portfolio_Key = p.PortfolioKey
+LEFT JOIN dbo.Portfolio           mp  ON mp.PortfolioKey  = ms.Master_Portfolio_Key
+LEFT JOIN dbo.Strategy            st  ON st.Code          = p.StrategyCode
+LEFT JOIN dbo.Benchmark           b   ON b.BenchmarkCode  = p.PrimaryBenchmarkCode
+LEFT JOIN dbo.PortfolioGroup      pg  ON pg.Code          = p.PortfolioGroupCode
+LEFT JOIN dbo.Billing_Details     bd  ON bd.Portfolio_Code = p.PortfolioCode
+WHERE c.Code = '${CC}'
+ORDER BY a.AccountId, p.PortfolioCode;`),
+    q(0, 'Down the tree: position → security → asset class and price', `
+SELECT p.PortfolioCode,
+       s.ShortName,
+       s.LongName,
+       s.Name,
+       ac.Name         AS Asset_Class,
+       cac.Name        AS Customer_Asset_Class,
+       s.SectorGICS,
+       pos.Quantity,
+       pos.MarketPrice,
+       pos.AsOfDate
+FROM      dbo.Position           pos
+JOIN      dbo.Portfolio          p   ON p.PortfolioKey = pos.PortfolioKey
+JOIN      dbo.Security           s   ON s.SecurityKey  = pos.SecurityKey
+LEFT JOIN dbo.LinkAssetClass     lac ON lac.LinkAssetClassKey = s.LinkAssetClassKey
+LEFT JOIN dbo.AssetClass         ac  ON ac.Code  = lac.AssetClassCode
+LEFT JOIN dbo.CustomerAssetClass cac ON cac.Code = lac.CustomerAssetClassCode
+WHERE pos.AsOfDate = '${AS}'
+  AND p.PortfolioCode IN (${IN})
+ORDER BY p.PortfolioCode, s.ShortName;`)];
+
+  Q.story = [
+    q('section 8', 'Trading flow for every order of this client', flow(`WHERE oa.Portfolio_Key IN (${PF_KEYS})\n   OR o.Portfolio_Key IN (${PF_KEYS})`), 'Filtered to this client\'s portfolios. Rejected orders show with empty trade and transaction columns.'),
+    q(0, `${B.O.OrderId} end to end, down to the cash entry`, `
+SELECT o.Order_Id,
+       t.Trade_Id,
+       p.PortfolioCode,
+       s.ShortName          AS Security_Name,
+       tx.TransactKey,
+       ce.Cash_Entry_Id,
+       ce.Value_Date,
+       ce.Net_Cash_Amount
+FROM      dbo.[Order]          o
+JOIN      dbo.Order_Allocation oa ON oa.Order_Key = o.Order_Key
+JOIN      dbo.Trade            t  ON t.Trade_Key  = oa.Trade_Key
+JOIN      dbo.Trade_Allocation ta ON ta.Order_Allocation_Key = oa.Order_Allocation_Key
+                                 AND ta.Is_Current = 1
+JOIN      dbo.Transact         tx ON tx.PortfolioKey = ta.Portfolio_Key
+                                 AND tx.SecurityKey  = ta.Security_Key
+                                 AND tx.TradeDate    = ta.Trade_Date
+                                 AND tx.Quantity     = ta.Quantity
+                                 AND tx.TradeType    = UPPER(ta.Transaction_Type)
+JOIN      dbo.Portfolio        p  ON p.PortfolioKey = ta.Portfolio_Key
+JOIN      dbo.Security         s  ON s.SecurityKey  = t.Security_Key
+LEFT JOIN dbo.Cash_Entry       ce ON ce.Transact_Key = tx.TransactKey
+WHERE o.Order_Id = '${B.O.OrderId}';`)];
+  return Q;
+}
+
 const GROUPS = ['The client\'s story', 'Who the client is', 'The trade, step by step', 'Cash', 'How the money is doing', 'Wrap-up'];
 function pages(s) {
   const hh = s.kind === 'household', P = [];
-  const add = (g, id, name, o) => P.push(Object.assign({g, id, name}, o));
+  const QM = queries(s);
+  const add = (g, id, name, o) => P.push(Object.assign({g, id, name, q: QM[id] || []}, o));
   const B = life(s, s.buy), SL = s.sell ? life(s, s.sell) : null;
 
 
-  add(0, 'meet', hh ? 'Meet Abraham' : 'Meet Emily', {custom: 1, title: hh ? 'Meet Abraham, a client looking for a firm' : 'Meet Emily, a client looking for a firm', story: `Click <b>Next</b> or any card to build the relationship one step at a time. Every step links to the page that shows it in our data.`, body: '<div id="meet"></div>', tech: ''});
+  add(0, 'meet', hh ? 'Meet Abraham' : 'Meet Emily', {custom: 1, title: hh ? 'Meet Abraham, a client looking for a firm' : 'Meet Emily, a client looking for a firm', story: `Click <b>Next</b> or any card to build the relationship one step at a time. Every step links to the page that shows it in our data.`, body: '<div id="meet"></div>', tech: tech('Client → Account (ClientKey) → Contact_Account (Account_Key) → Contact (Person_Id) · Contact_Account.Portfolio_Id → Portfolio · Contact.Household_Key → HouseHold')});
   
   /*add(0, 'simulation', 'Simulation', {sim: 1, title: hh ? 'One trade, from order to cash' : 'One trade for Emily, from order to cash',
     story: `Press play to watch a trade move through the business. Each step is done by someone in the real world and recorded in a FinIn table. Click any step, then open the page that shows it with our data.`});
@@ -464,7 +1140,7 @@ function pages(s) {
       T('ADVISOR', 'p', 'employs', esc(advs.map((a, i) => a + (i === 0 ? ' (lead)' : '')).join(', ')), 'portfolios'),
       T('CLIENT', 'p', 'serves', `<b>${esc(s.clients.map(k => one('Client', 'ClientKey', k).Name + ' (' + one('Client', 'ClientKey', k).Code + ')').join(', '))}</b>`, 'client', [
         hh ? T('HOUSEHOLD', 'p', 'belongs to', `"${esc(s.household.HouseholdName)}"`, 'household', [T('HOUSEHOLD_MEMBER', 'p', 'has members', esc(D.HouseOwner.filter(h => h.HouseholdKey === 1).map(h => nm(one('Contacts', 'PersonId', h.PersonId)) + ' (' + h.Role + ')').join(', ')), 'household', [T('CLIENT OWNERS', 'p', 'owned by', esc(s.contacts.filter(c => s.clients.includes(c.ClientKey)).map(nm).join(', ')), 'client')]), T('HOUSEHOLD', 'p', 'also linked to', 'Isaac &amp; Rebekah Household (Isaac is Head), Hagar &amp; Ishmael Household (Abraham is POA)', 'household')]) : T('HOUSEHOLD', 'x', 'belongs to', 'none: a client on her own', 'household'),
-        T('CONTACT', 'p', 'acts through', esc(s.contacts.map(c => nm(c) + ' (' + roleTxt(c) + ')').join(', ')), 'people'),
+        T('CONTACT', 'p', 'acts through', esc(s.contacts.map(c => nm(c) + ' (' + roleTxt(c) + ')').join(', ')), 'roles'),
         T('ACCOUNT', 'a', 'owns', esc(s.accounts.map(a => a.AccountId + ' ' + one('Plan', 'PlanKey', a.PlanKey).Name).join(', ')), 'accounts', [
           T('PLAN', 'a', 'registered under', esc(plans.join(', ')), 'accounts'),
           T('CUSTODIAN', 'a', 'held at', esc(custs.join(', ')), 'execution'),
@@ -488,7 +1164,7 @@ function pages(s) {
               T('CASH ENTRY', 't', 'settled as', esc(B.ce.map(c => c.CashEntryId + ' ' + money2(c.NetCashAmount, ccy(c.CashAccountCode))).join(', ')), 'cashentry')])])])])]);
     const draw = n => `<li>${n.open ? `<button class="nd" data-open="${n.open}">` : '<span class="nd">'}${n.verb ? `<span class="vb">${esc(n.verb)}</span>` : ''}<span class="tg ${n.cls}">${esc(n.tag)}</span><span class="tv">${n.val}</span>${n.open ? '</button>' : '</span>'}${n.kids.length ? `<ul>${n.kids.map(draw).join('')}</ul>` : ''}</li>`;
     add(1, 'tree', 'Client tree', {title: hh ? 'The whole family on one tree' : 'Emily on one tree', story: `This is how FinIn connects everything, from the firm down to the price of one security. Each badge is a table; ${hh ? 'every value is the Abraham family\'s real data' : 'grey badges are parts Emily does not use'}. Click any line to open its page.`, tbl: 'All FinIn tables', row: 'The business hierarchy',
-      body: `<div class="treebox"><ul class="tree2">${draw(tree)}</ul></div>`, tech: tech('Firm → Advisor, Client → Household / Contact → Account → Plan, Custodian, Portfolio → Strategy, Benchmark, Composite, Portfolio_Group, Billing_Details, Master_SubPortfolio, Product → ShareClass, Position → Security → Issuer, LinkAssetClass, DollarAnalytics')});
+      body: `<div class="treebox"><ul class="tree2">${draw(tree)}</ul></div>`, tech: tech('Client → Account → Plan → Custodian · Account → AccountPortfolio → Portfolio → Strategy, Benchmark, Portfolio_Group, Billing_Details, Master_SubPortfolio · Product → ShareClass · Position → Security → LinkAssetClass → AssetClass, CustomerAssetClass')});
   }
   // Who
   add(1, 'household', 'Household', hh ? {title: 'Meet the Abraham family', story: `Abraham and Sarah have been clients since 2015. With their son <b>Isaac</b> and the <b>Abraham Family Trust</b>, the firm looks after them as one household. The family is now three households: Isaac has his own with Rebekah, and Abraham also acts for Hagar & Ishmael's.`, tbl: 'dbo.HouseHold · dbo.Household_Member', row: 'One household, and one row per member with their role',
@@ -515,6 +1191,29 @@ function pages(s) {
     body: recs(s.contacts.map((c, i) => ({hl: s.clients.includes(c.ClientKey), t: nm(c), pill: `<div class="who">${avatar(nm(c), i)}<span>${pill(CTYPE[c.ContactTypeCode], 'info')} ${c.IsClient === 'Y' ? pill('Client', 'ok') : ''}</span></div>`, kv: [['Also known as', c.MiddleName || ''], ['Contact id', c.PersonId], ['Letters to', c.CorrespondenceName], ['Works at', one('Employer', 'EmployerKey', c.EmployerKey).EmployerName || ''], ['Households', D.HouseOwner.filter(h => h.PersonId === c.PersonId).map(h => one('Household', 'HouseholdKey', h.HouseholdKey).HouseholdName.replace(' Household', '') + ' (' + h.Role + ')').join('; ') || 'None']]}))),
     tech: tech('Contact.Person_Id · Contact.Client_Key → Client · Contact.Household_Key → HouseHold')});
 
+
+  // ---- roles ----
+  {
+    const rl = s.links, used = uniq(rl.map(l => l.PortfolioContactAssignmentTypeCode));
+    const who = id => nm(one('Contacts', 'PersonId', id));
+    const acc = k => one('Account', 'AccountKey', k);
+    const rp = k => `<span class="role ${esc(k)}">${esc(ROLE[k])}</span>`;
+    const holders = codes => uniq(rl.filter(l => codes.includes(l.PortfolioContactAssignmentTypeCode)).map(l => who(l.ContactID)));
+    const elsewhere = hh ? D.ContactAccounts.filter(l => s.contacts.some(c => c.PersonId === l.ContactID) && !s.accounts.some(a => a.AccountKey === l.AccountKey)) : [];
+    const rolePf = uniq(rl.map(l => l.PortfolioID));
+    const roleCards = recs(used.map(k => ({t: ROLE[k], pill: rp(k), s: ROLEMEAN[k], kv: [['Here', holders([k]).join(', ')]]})));
+    const permCards = `<div class="recs">${Object.values(PERM).map(([lab, codes]) => rec({t: lab, s: 'Roles: ' + codes.filter(k => used.includes(k)).map(k => ROLE[k]).join(', '), extra: `<div class="plist">${holders(codes).map((n, i) => `<div>${avatar(n, i)}<b>${esc(n)}</b></div>`).join('') || '<span class="muted">Nobody on these accounts</span>'}</div>`})).join('')}</div>`;
+    const byPf = rolePf.map(k => { const p = pf(k), ls = rl.filter(l => l.PortfolioID === k); const a = acc(ls[0].AccountKey);
+      return `<div class="pfblock"><div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap"><b style="font-size:20px">${esc(p.PortfolioCode)} · ${esc(p.LongName)}</b><span class="muted">${esc(a.AccountId)} ${esc(a.Name)}</span></div><div class="plist">${ls.map((l, i) => `<div>${avatar(who(l.ContactID), i)}<b>${esc(who(l.ContactID))}</b>${rp(l.PortfolioContactAssignmentTypeCode)}</div>`).join('')}</div>${p.PortfolioType === 'MASTER' ? `<p class="muted" style="font-size:16px">Roles sit on the master; its sleeves ${esc(s.pfKeys.map(pf).filter(x => x.ParentId === k).map(x => x.PortfolioCode).join(' and '))} follow it.</p>` : ''}</div>`; }).join('');
+    const byPerson = recs(s.contacts.map(c => { const ls = rl.filter(l => l.ContactID === c.PersonId); return {t: nm(c), s: ls.length + (ls.length === 1 ? ' role' : ' roles'), hl: ls.length > 1, extra: `<div class="plist">${ls.map(l => `<div>${rp(l.PortfolioContactAssignmentTypeCode)}<span>${esc(pfc(l.PortfolioID))} · ${esc(acc(l.AccountKey).AccountId)}</span></div>`).join('')}</div>`}; }));
+    const outside = elsewhere.length ? `<p class="cap">Roles outside this client</p><p class="muted" style="font-size:17px;margin-top:4px">The same people also act on other family clients' accounts. Each is a separate client, so these roles do not belong to the Abraham Family.</p>` + recs(elsewhere.map(l => { const a = acc(l.AccountKey), c = one('Client', 'ClientKey', a.ClientKey); return {t: who(l.ContactID), pill: rp(l.PortfolioContactAssignmentTypeCode), s: `${a.AccountId} ${a.Name}`, kv: [['Portfolio', pfc(l.PortfolioID)], ['Client', c.Name + ' (' + c.Code + ')']]}; })) : '';
+    add(1, 'roles', 'Roles', {title: hh ? `${s.contacts.length} people, ${rl.length} roles on the family's accounts` : 'Emily holds one role: owner',
+      story: hh ? `Owning money is only one kind of role. On every account and portfolio the firm records <b>who may do what</b>. Abraham owns his individual account and his IRA. Sarah holds <b>power of attorney</b> on the IRA. Abraham and Sarah are <b>trustees</b> of the family trust, which owns the trust account, and Isaac is its <b>beneficiary</b>. Amanda Roberts, the accountant, only receives copies. One person can hold several roles, and one account can have several people.` : `Emily is the <b>owner</b> of ACC-104 and the only person on it, so she decides, receives the statements and benefits from the money. The firm still records her role, so the same rules work for every client.`,
+      tbl: 'dbo.Contact_Account', row: 'One contact, one account, one portfolio role',
+      body: `<p class="cap">The roles and what they mean</p>${roleCards}<p class="cap">Who can do what</p>${permCards}<p class="cap">By portfolio</p>${byPf}<p class="cap">By person</p>${byPerson}${outside}<div class="meaning"><b>Why a Contact_Account table</b>One contact can have many accounts and one account can have many contacts, so the link is many-to-many. Contact_Account holds one row per contact, account and portfolio role, and the role is tied to its own portfolio so it is never repeated on another one.</div>`,
+      tech: tech('Contact_Account.Contact_Id → Contact.Person_Id · Account_Key → Account · Portfolio_Id → Portfolio, joined with AccountPortfolio.PortfolioKey = Contact_Account.Portfolio_Id', table([{h: 'Contact_Id', k: 'ContactID'}, {h: 'Account_Key', k: 'AccountKey'}, {h: 'Portfolio_Id', k: 'PortfolioID'}, {h: 'Role', f: r => r.PortfolioContactAssignmentTypeCode}], rl))});
+  }
+
   const cl = s.clients.map(k => one('Client', 'ClientKey', k));
   add(1, 'client', 'Client', {title: hh ? 'Three owners, one client' : 'One client', story: hh ? `In the accounting system the family is one client, <b>${esc(cl[0].Name)}</b>. Every account they own rolls up to it.` : `Emily owns client <b>${esc(cl[0].Code)}</b>, which owns her account.`, tbl: 'dbo.Client', row: 'The legal relationship that owns accounts',
     body: recs(cl.map(c => ({hl: 1, t: c.Name, s: c.LongName, kv: [['Client code', c.Code], ['Client key', c.ClientKey], ['Owners', s.contacts.filter(x => x.ClientKey === c.ClientKey).map(x => x.ContactTypeCode === 'ORG' ? x.FirstName + ' ' + x.LastName : x.FirstName).join(', ')], ['Accounts', s.accounts.map(a => a.AccountId).join(', ')]]}))),
@@ -535,7 +1234,7 @@ function pages(s) {
         + g('Reporting group', 'How is each business segment doing?', grp.map(x => pill(x, 'info')).join(''), 'Assets, flows and revenue by client segment. Portfolio_Group · Portfolio_Group_Mapping.', 'aum')
         + g('Composite', 'What is our track record for this strategy?', comp.map(x => pill(x, 'ok')).join(''), 'Portfolios run the same way, combined into one performance figure, as GIPS requires.', 'benchmark')
         + g('Billing group', bill.length ? 'How much should this family pay?' : 'How much should this client pay?', bill.length ? bill.map(x => pill(x, 'warn')).join('') : pill('None: billed on her own'), bill.length ? 'Portfolios added together reach cheaper fee tiers, saving the family about $14,500 a year.' : 'Emily has one portfolio, so it is billed on its own value.', 'billing') + `</div>`; })(),
-    tech: tech('AccountPortfolio.AccountKey → Account · PortfolioKey → Portfolio (IsActive = 1) · Master_SubPortfolio.Master_Portfolio_Key → Sub_Portfolio_Key · Portfolio_Group_Mapping · Composite · Billing_Details.Billing_Group_Code')});
+    tech: tech('AccountPortfolio.AccountKey → Account · PortfolioKey → Portfolio (IsActive = 1) · Master_SubPortfolio.Master_Portfolio_Key → Sub_Portfolio_Key · Portfolio_Group_Mapping.Portfolio_Key → Portfolio, Portfolio_Group_Key → PortfolioGroup · Billing_Details.Portfolio_Code = Portfolio.PortfolioCode')});
 
 
   if (hh) {
@@ -549,7 +1248,7 @@ function pages(s) {
       pre: `<div class="pfblock hl"><div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap"><b style="font-size:22px">${esc(prod.ProductName)}</b>${pill('Fund portfolio ' + f.PortfolioCode, 'info')}</div>${kv([['Product id', prod.ProductId], ['Fund CUSIP', prod.CUSIP], ['Strategy', one('Strategy', 'Code', f.StrategyCode).Name], ['Benchmark', one('Benchmark', 'BenchmarkCode', f.PrimaryBenchmarkCode).BenchmarkName], ['Portfolio manager / advisor', one('Advisor', 'AdvisorKey', f.AdvisorKey).AdvisorName], ['Fund value, 30 Sep', money(sum(fpos, p => p.MarketValue))]])}<p class="cap" style="margin-top:12px">Who holds the fund</p><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px">${helds.map(p => pill(p.PortfolioCode + ' · Abraham Family · ' + num(p.Quantity) + ' units of ' + hsc.ShareClassKey + ' (a position)', 'ok')).join('')}${inv.map(a => pill(a.AccountId + ' · ' + one('Client', 'ClientKey', a.ClientKey).Name + ' (institutional account)')).join('')}</div></div>`,
       body: `<p class="cap">Share classes</p>` + recs(scs.map(c => { const p = scp(c.ShareClassKey); return {t: `${c.ShareClassKey} · ${c.ShareClassName}`, s: 'CUSIP ' + c.CUSIP, pill: pill(c.ShareClassName === 'Retail' ? 'For individuals' : 'For institutions', c.ShareClassName === 'Retail' ? 'info' : 'warn'), kv: [['Expense ratio', (c.ExpenseRatio * 100).toFixed(2) + '% a year'], ['Minimum investment', money(c.MinInvestment)], ['NAV per unit, 30 Sep', '$' + num(p.GROSS_NAV)], ['Return, 1 month (net)', (p.NET_1_MONTH * 100).toFixed(2) + '%'], ['Return, 1 year (net)', (p.NET_12_MONTH * 100).toFixed(2) + '%'], ['Return, 3 yrs a year (net)', (p.NET_3_YEAR_ANNUALIZED * 100).toFixed(2) + '%']]}; })) +
         `<p class="cap">One year to 30 Sep 2026: gross, net of fees, and benchmark</p><div class="rows">${br('Gross (both classes)', p1.GROSS_12_MONTH, '#cfa63d')}${br('Net, SC1 Retail', p1.NET_12_MONTH, '#5f9fd6')}${br('Net, SC2 Institutional', p2.NET_12_MONTH, '#4fae8b')}${br(esc(p1.BENCHMARK_NAME), p1.BENCHMARK_GROSS_12_MONTH, '#c9c7d3')}</div><div class="meaning"><b>How it is stored</b>Each share class is a security with its own CUSIP. The Position rows of ${helds.map(p => esc(p.PortfolioCode)).join(' and ')} point to security ${esc(sec(held.SecurityKey).ShortName)} (CUSIP ${esc(hsc.CUSIP)}), which links to share class ${esc(hsc.ShareClassKey)}, then to the product, then to fund portfolio ${esc(f.PortfolioCode)}. The fund's own holdings and trades stay in GOS900 and never appear in Abraham's portfolios.</div>`,
-      tech: tech('Product.Portfolio_Key → Portfolio (fund) · ShareClass.Product_Key → Product · Shareclass_Performance.SHARECLASS_KEY → ShareClass · AccountPortfolio links investor accounts to the fund portfolio', table([{h: 'Class', k: 'SHARECLASS_KEY'}, {h: 'As of', k: 'AS_OF_DATE'}, {h: 'NAV', k: 'GROSS_NAV', n: 1}, {h: 'Gross 12M', k: 'GROSS_12_MONTH', n: 1}, {h: 'Net 12M', k: 'NET_12_MONTH', n: 1}, {h: 'Benchmark 12M', k: 'BENCHMARK_GROSS_12_MONTH', n: 1}], D.ShareClassPerformance))});
+      tech: tech('Product.Portfolio_Key → Portfolio (fund) · ShareClass.Product_Key → Product · Shareclass_Performance.Shareclass_Key → ShareClass.Share_Class_Key · AccountPortfolio links investor accounts to the fund portfolio', table([{h: 'Class', k: 'SHARECLASS_KEY'}, {h: 'As of', k: 'AS_OF_DATE'}, {h: 'NAV', k: 'GROSS_NAV', n: 1}, {h: 'Gross 12M', k: 'GROSS_12_MONTH', n: 1}, {h: 'Net 12M', k: 'NET_12_MONTH', n: 1}, {h: 'Benchmark 12M', k: 'BENCHMARK_GROSS_12_MONTH', n: 1}], D.ShareClassPerformance))});
 
     const m = pf(103), sl = D.Master_SubPortfolio.filter(x => x.MasterPortfolioKey === 103).map(x => ({...x, p: pf(x.SubPortfolioKey)}));
     sl.forEach(x => { x.v = sum(s.positions.filter(p => p.PortfolioKey === x.SubPortfolioKey), p => p.MarketValue); x.r = one('PortfolioPerformance', 'PortfolioCode', x.p.PortfolioCode); });
@@ -559,7 +1258,7 @@ function pages(s) {
     add(1, 'sleeves', 'Master and sleeves', {title: `${m.PortfolioCode} is the sum of its two sleeves`, story: `The trust's account ACC-103 runs a <b>master portfolio</b>, <b>${esc(m.PortfolioCode)} ${esc(m.LongName)}</b>, with a balanced 60/40 goal. Instead of one manager doing everything, the money is split into <b>sleeves</b>, each run by its own strategy: a bond sleeve and an equity sleeve. The master holds no securities itself. Its value is the sum of the sleeves (<b>${money(mv)}</b>), its return is their value-weighted blend (<b>${pct(blend)}</b> over a year, matching the stored ${pct(mr.Return_1Year)}), and the sleeves are billed to the master.`, tbl: 'dbo.Master_SubPortfolio · dbo.Portfolio', row: 'One master-to-sleeve link',
       pre: `<div class="pfblock hl"><div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap"><b style="font-size:22px">${esc(m.PortfolioCode)} · ${esc(m.LongName)}</b><b>${money(mv)}</b></div><div class="msplit">${sl.map((x, i) => `<div style="width:${(x.v / mv * 100).toFixed(1)}%;background:${sc[i]}66">${esc(x.SleeveId === 'FI' ? 'Bonds' : 'Equities')} ${Math.round(x.v / mv * 100)}%</div>`).join('')}</div><div class="sleeve">${sl.map((x, i) => `<div class="rec" style="border-top:6px solid ${sc[i]}"><div class="rt">${esc(x.p.PortfolioCode)} · ${esc(x.p.LongName)}</div><div class="rs">Sleeve ${esc(x.SleeveId)} · ${esc(one('Strategy', 'Code', x.p.StrategyCode).Name)}</div>${kv([['Value, 30 Sep', money(x.v)], ['Weight in master', Math.round(x.v / mv * 100) + '%'], ['Benchmark', one('Benchmark', 'BenchmarkCode', x.p.PrimaryBenchmarkCode).BenchmarkName], ['1-year return', pct(x.r.Return_1Year)], ['Holdings', s.positions.filter(p => p.PortfolioKey === x.SubPortfolioKey).map(p => sec(p.SecurityKey).ShortName).join(', ')], ['Billed to', (D.BillingDetails.find(b => b.PortfolioCode === x.p.PortfolioCode) || {}).BilltoPortfolio || '']])}</div>`).join('')}</div></div>`,
       body: `<p class="cap">How the master's numbers are built</p><div class="rows">${sl.map((x, i) => `<div class="rowv"><span>${esc(x.p.PortfolioCode)} weight × return</span><div><div class="hbar" style="width:${(x.v / mv * x.r.Return_1Year / blend * 60).toFixed(1)}%;background:${sc[i]}"></div></div><span class="v">${Math.round(x.v / mv * 100)}% × ${pct(x.r.Return_1Year)}</span></div>`).join('')}<div class="rowv"><span><b>${esc(m.PortfolioCode)} 1-year return</b></span><div><div class="hbar" style="width:60%;background:var(--red)"></div></div><span class="v">${pct(blend)}</span></div></div>`,
-      tech: tech('Master_SubPortfolio.Master_Portfolio_Key → Portfolio (MASTER) · Sub_Portfolio_Key → Portfolio (SLEEVE) · master value = SUM(sleeve positions) · Billing_Details.Bill_To_Portfolio = master', table([{h: 'Master', f: () => 'GOS103'}, {h: 'Sleeve', f: r => r.p.PortfolioCode}, {h: 'Sleeve_Id', k: 'SleeveId'}, {h: 'As of', k: 'AsofDate'}], sl), "SELECT m.PortfolioCode AS Master, s.PortfolioCode AS Sleeve, SUM(pos.MarketValue) AS Value\nFROM dbo.Master_SubPortfolio ms\nJOIN dbo.Portfolio m ON m.PortfolioKey = ms.Master_Portfolio_Key\nJOIN dbo.Portfolio s ON s.PortfolioKey = ms.Sub_Portfolio_Key\nJOIN dbo.Position pos ON pos.PortfolioKey = s.PortfolioKey AND pos.AsOfDate = '2026-09-30'\nGROUP BY m.PortfolioCode, s.PortfolioCode;")});
+      tech: tech('Master_SubPortfolio.Master_Portfolio_Key → Portfolio (MASTER) · Sub_Portfolio_Key → Portfolio (SLEEVE) · master value = SUM(sleeve positions) · Billing_Details.Bill_To_Portfolio = master', table([{h: 'Master', f: () => 'GOS103'}, {h: 'Sleeve', f: r => r.p.PortfolioCode}, {h: 'Sleeve_Id', k: 'SleeveId'}, {h: 'As of', k: 'AsofDate'}], sl))});
   }
   // Trade lifecycle
   const chainV = [B.O.OrderId, B.T.TradeId, B.oa.map(a => pfc(a.PortfolioKey)).join(' + '), B.S.ShortName, pfc(B.hp), B.tx.map(t => t.TransactKey).join(', '), B.ce.map(c => c.CashEntryId).join(', ')];
@@ -569,21 +1268,21 @@ function pages(s) {
   const stPill = o => pill(o.OrderStatus === 'PartiallyFilled' ? 'Partly filled' : o.OrderStatus, o.OrderStatus === 'Filled' ? 'ok' : o.OrderStatus === 'Rejected' ? 'bad' : 'warn');
   add(2, 'order', 'Order', {pre: chain(0), title: `${B.T.PortfolioManagerName} places the order`, story: `On <b>${dt(B.O.TradeDate)}</b> portfolio manager <b>${esc(B.T.PortfolioManagerName)}</b>, working for advisor <b>${esc(B.adv)}</b>, decides to buy ${num(B.O.OrderedQuantity)} ${esc(B.S.LongName)}${B.oa.length > 1 ? ` for ${B.oa.length} portfolios in one <b>block order</b>` : ''}: <b>${esc(B.O.OrderId)}</b>.` + (hh ? ` Other orders that month: a Treasury sale in Abraham's IRA that only <b>partly filled</b> and was resent, a bond purchase for the trust, and a sale compliance <b>rejected</b>.` : ''), tbl: 'dbo.Order', row: 'One investment decision sent to the trading desk',
     body: recs([B.O, ...others].map(o => ({hl: o.OrderKey === s.buy, t: `${o.TransactionType} ${num(o.OrderedQuantity)} ${sec(o.SecurityKey).ShortName}`, s: o.OrderId, pill: stPill(o), kv: [['Created', (o.OrderCreatedDateTime || '').replace(' ', ' at ').slice(0, 19)], ['Filled', num(o.ExecutedQuantity)], ['Limit', o.LimitPrice ? num(o.LimitPrice) : 'Market'], ['Block order', o.IsBlockOrder ? 'Yes' : 'No'], ['Why', o.RejectReasonCode ? 'Rejected: ' + o.RejectReasonCode : o.ParentOrderKey ? 'Resend of ' + o.ParentOrderKey : o.OrderReasonCode]]}))),
-    tech: tech('Order.Order_Key · Parent_Order_Key links a resend to the original · a block order gets its portfolios from Order_Allocation')});
+    tech: tech('Order.Order_Key · Parent_Order_Key links a resend to the original · Order has no security key: portfolio and security come from Order_Allocation')});
 
   add(2, 'execution', 'Execution', {pre: chain(1), title: `${B.broker} executes; ${B.cust} settles`, story: `The trader sends the order to the <b>broker</b>, <b>${esc(B.broker)}</b>, which fills ${num(B.T.Quantity)} at <b>${cur$(B.c)}${num(B.T.ExecutionPrice)}</b> on ${B.T.Exchange === 'XETR' ? 'Xetra' : 'Nasdaq'} at ${esc((B.T.LastExecutionTime || '').slice(11, 16))}. The <b>custodian</b>, <b>${esc(B.cust)}</b>, holds the client's assets and settles the trade on ${dt(B.T.SettlementDate)}: shares in, cash out.`, tbl: 'dbo.Trade', row: 'One execution with a broker',
     body: recs(s.trades.map(t => ({hl: t.TradeKey === B.T.TradeKey, t: `${t.TransactionType} ${num(t.Quantity)} ${sec(t.SecurityKey).ShortName}`, s: t.TradeId + ' · ' + one('Broker', 'BrokerKey', t.ExecutingBrokerKey).Name, pill: pill(t.TradeStatus, 'ok'), kv: [['Price', num(t.ExecutionPrice)], ['Commission', num(t.CommissionAmount)], ['Net amount', num(t.NetAmount)], ['Exchange', t.Exchange], ['Traded', dt(t.TradeDate)], ['Settles', dt(t.SettlementDate)]]}))),
-    tech: tech('Trade.Trade_Key ← Order_Allocation.Trade_Key · Executing_Broker_Key → Broker · custodian comes from Order_Allocation.Custodian_Key')});
+    tech: tech('Trade.Trade_Key ← Order_Allocation.Trade_Key · Trade.Security_Key → Security · one trade per block (Trade_Block_Id)')});
 
   add(2, 'allocation', 'Allocation', {pre: chain(2), title: 'Shared out to each portfolio', story: `The order is <b>allocated</b>: ${B.oa.map(a => `<b>${num(a.TargetQuantity)}</b> to <b>${esc(pfc(a.PortfolioKey))}</b> in ${esc(a.AccountCode)}`).join(' and ')}. After execution each share becomes a <b>trade allocation</b> with its exact money. ${B.ta.some(t => !t.IsCurrent) ? 'GOS105\'s first version charged $240 commission by mistake, so <b>version 2</b> corrected it to $120. Both are kept; only the current one counts.' : ''}`, tbl: 'dbo.Order_Allocation · dbo.Trade_Allocation', row: 'One portfolio\'s share of an order, and of the trade',
     body: `<p class="cap">Planned split (order allocation)</p>` + recs(s.oa.map(a => ({hl: a.OrderKey === s.buy, t: `${pfc(a.PortfolioKey)} · ${num(a.TargetQuantity)}`, s: one('Order', 'OrderKey', a.OrderKey).OrderId + ' · ' + a.AccountCode, kv: [['Share of order', Math.round(a.TargetPct * 100) + '%'], ['Executed', num(a.ExecutedQuantity)], ['Net settle', money2(a.NetSettleAmount)]]}))) +
       `<p class="cap">Booked split (trade allocation, by version)</p>` + recs(s.tas.map(t => ({hl: B.cur.includes(t), dim: !t.IsCurrent, t: `${pfc(t.PortfolioKey)} · v${t.TradeVersion}`, s: one('Trade', 'TradeKey', t.TradeKey).TradeId, pill: pill(t.IsCurrent ? 'Current' : 'Superseded', t.IsCurrent ? 'ok' : 'bad'), kv: [['Quantity', num(t.Quantity)], ['Commission', num(t.CommissionAmount)], ['Net money', money2(t.NetMoneyBase)], ['Note', t.TradeComments || '']]}))),
-    tech: tech('Order_Allocation.Order_Key → Order · Trade_Key → Trade · Trade_Allocation.Order_Allocation_Key → Order_Allocation · filter Is_Current = true')});
+    tech: tech('Order_Allocation.Order_Key → Order · Trade_Key → Trade · Trade_Allocation.Order_Allocation_Key → Order_Allocation · Trade_Allocation.Trade_Key → Trade · filter Is_Current = 1')});
 
   const secs = uniq(s.positions.map(p => p.SecurityKey)).map(sec);
   add(2, 'security', 'Security', {pre: chain(3), title: `${B.S.ShortName} in the security master`, story: `Every order, trade and position points to one row of the <b>security master</b> (Dim Security in Gold). It says what the instrument is, and carries all its codes, so data from the broker, the custodian and the price vendor lands on the same security.`, tbl: 'dbo.Security · dbo.SecurityIdentifier', row: 'One instrument and every code it is known by',
     body: recs(secs.map(x => ({hl: x.SecurityKey === B.S.SecurityKey, t: x.ShortName, s: x.LongName, pill: pill(x.ProductType, 'info'), kv: [['Type', x.SecurityType], ['Sector', x.SectorGICS || '—'], ['Currency', x.SecurityPriceCurrencyCode], ['Issuer', x.IssuerName]], extra: `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${D.SecurityIdentifier.filter(i => i.SecurityKey === x.SecurityKey).map(i => pill(i.IdentifierType + ' ' + i.Identifier)).join('')}</div>`}))),
-    tech: tech('Security.SecurityKey ← Order, Trade, Position, Transact · SecurityIdentifier.SecurityKey → Security')});
+    tech: tech('Security.SecurityKey ← Order_Allocation.Security_Key, Trade.Security_Key, Position.SecurityKey, Transact.SecurityKey · Security.LinkAssetClassKey → LinkAssetClass → AssetClass, CustomerAssetClass')});
 
   const maxMV = Math.max(...s.direct.map(p => p.MarketValue));
   add(2, 'position', 'Position', {pre: chain(4), title: B.pos ? `${pfc(B.hp)} now holds ${num(B.pos.Quantity)} ${B.S.ShortName}` : 'Positions', story: `A <b>position</b> is how much of one security a portfolio holds on a day. After the trade settles, ${esc(pfc(B.hp))}'s ${esc(B.S.ShortName)} position includes the new shares: <b>${num(B.pos.Quantity)}</b> worth <b>${money(B.pos.MarketValue)}</b> on 30 September. Positions are a daily snapshot, so we always pick a date first.`, tbl: 'dbo.Position', row: 'One security in one portfolio on one date',
@@ -600,7 +1299,7 @@ function pages(s) {
   const txRow = (t, hl) => ({d: dt(t.TradeDate), ty: TTYPE[t.TradeType] || t.TradeType, k: ['BUY', 'FEE', 'WD'].includes(t.TradeType) ? 'bad' : 'ok', txt: `${pfc(t.PortfolioKey)}${t.SecurityKey ? ' · ' + num(t.Quantity) + ' ' + sec(t.SecurityKey).ShortName : ''}`, a: t.TotalCashEffect, hl});
   add(2, 'transaction', 'Transaction', {pre: chain(5), title: 'Today\'s transaction is booked', story: `Accounting books every current trade allocation as a <b>transaction</b> in the portfolio ledger: ${B.tx.map(t => `<b>${TTYPE[t.TradeType]} ${num(t.Quantity)} ${esc(sec(t.SecurityKey).ShortName)} in ${esc(pfc(t.PortfolioKey))}</b>`).join(' and ')}. The same ledger holds dividends, interest, fees and deposits, and every report reconciles to it.`, tbl: 'dbo.Transact', row: 'One accounting event in one portfolio',
     body: ledger(s.txs.map(t => txRow(t, B.tx.includes(t)))),
-    tech: tech('Transact.TradeAllocationKey → Trade_Allocation (trades only) · PortfolioKey → Portfolio · TradeType FEE = fees')});
+    tech: tech('Transact has no Trade_Allocation_Key: it is matched to the current Trade_Allocation on portfolio + security + trade date + quantity + buy/sell · PortfolioKey → Portfolio · TradeType FEE = fees')});
 
   // Cash
   add(3, 'cashentry', 'Cash entry (buy)', {pre: chain(6), title: 'A buy takes cash out: the cash entry', story: `When a buy settles, cash leaves the portfolio's cash account and a <b>cash entry</b> records it. ${B.ce.map(c => `<b>${money2(-c.NetCashAmount, ccy(c.CashAccountCode))}</b> left <b>${esc(c.CashAccountCode)}</b> on ${dt(c.ValueDate)}`).join('; ')}. ${hh ? 'Mistakes are never deleted: a duplicate fee is cancelled by a reversing entry.' : 'Emily\'s $200,000 deposit is a cash entry too, money coming in.'}`, tbl: 'dbo.Cash_Entry', row: 'One debit or credit to one cash account',
@@ -637,12 +1336,6 @@ function pages(s) {
     body: `<p class="cap">Who is billed where</p>` + recs(bd.map(b => ({hl: b.BilltoPortfolio !== b.PortfolioCode, t: `${b.PortfolioCode} → ${b.BilltoPortfolio}`, s: b.BillingGroupCode ? 'Group ' + b.BillingGroupCode : 'No group', kv: [['Schedule', b.BillingProfileDescription], ['Since', dt(b.StartDate)]]}))) + `<p class="cap">Q3 2026 invoices</p>` + recs(inv.map(i => ({t: money2(i.InvoiceAmount), s: i.InvoiceNumber + ' · billed to ' + i.PortfolioCode, pill: pill(i.InvoiceStatus, 'ok'), kv: [['Value billed', money(i.MarketValue)], ['Fee', money2(i.CalculatedFees)], ['Discount', money2(i.DiscountAmount)], ['Advisor', i.RRDescription]]}))),
     tech: tech('Billing_Details.Portfolio_Code = Portfolio.PortfolioCode · Billing_Invoice on Portfolio_Id + Billing_Profile_Id, InvoiceDate between Start_Date and End_Date')});
 
-  const st = D.PortfolioStressTestResults.filter(r => s.codes.includes(r.PortfolioCode) && !['GOS103', 'GOS900'].includes(r.PortfolioCode));
-  const worst = [...st].sort((a, b) => a.ChangeDollar - b.ChangeDollar)[0], smax = Math.max(...st.map(r => Math.abs(r.ChangePercent)));
-  add(4, 'risk', 'Risk', {title: `In a repeat of 2008, ${worst.PortfolioCode} would lose ${money(-worst.ChangeDollar)}`, story: `Stress tests replay three shocks on today's holdings: the <b>2008 crisis</b>, rates <b>up 2 points</b>, and equities <b>down 20%</b>. ${hh ? 'Bond portfolios gain in a 2008 replay while equity-heavy ones take the hit.' : 'Steady Yield is mostly bonds, so a rate rise hurts more than an equity fall.'}`, tbl: 'dbo.PortfolioStressTestResults', row: 'One portfolio under one scenario',
-    body: `<div class="rows">${st.map(r => `<div class="rowv"><span>${esc(r.PortfolioCode)} · ${esc(r.Scenario.replace(' Financial Crisis', ''))}</span><div style="position:relative;height:16px;background:var(--soft);border-radius:8px"><div style="position:absolute;top:0;bottom:0;${r.ChangePercent < 0 ? 'right:50%' : 'left:50%'};width:${(Math.abs(r.ChangePercent) / smax * 50).toFixed(1)}%;background:${r.ChangePercent < 0 ? 'var(--neg)' : 'var(--green)'};border-radius:8px"></div><div style="position:absolute;left:50%;top:-3px;bottom:-3px;width:2px;background:#8b8da0"></div></div><span class="v">${money(r.ChangeDollar)}</span></div>`).join('')}</div>`,
-    tech: tech('PortfolioStressTestResults.PortfolioCode → Portfolio · RiskAnalytics.SecurityKey → Security')});
-
   const ev = [];
   s.orders.forEach(o => o.OrderCreatedDateTime && ev.push([o.OrderCreatedDateTime.slice(0, 10), `${o.OrderId} placed: ${o.TransactionType} ${num(o.OrderedQuantity)} ${sec(o.SecurityKey).ShortName} (${o.OrderStatus})`]));
   s.ces.filter(c => c.ValueDate >= '2026-09-01').forEach(c => ev.push([c.ValueDate, `${c.CashEntryId}: ${money2(c.NetCashAmount, ccy(c.CashAccountCode))} ${c.NetCashAmount < 0 ? 'out of' : 'into'} ${c.CashAccountCode}`]));
@@ -651,7 +1344,7 @@ function pages(s) {
   ev.sort((a, b) => a[0] < b[0] ? -1 : 1);
   add(5, 'story', 'The whole story', {title: hh ? 'From one decision to every dollar' : 'From one person to every dollar', story: `A decision by the portfolio manager became an order, an execution, allocations, a position, holdings, a transaction and cash, and then showed up in AUM, fees and performance. Every step is a FinIn table, and every table joins back to the client.`, tbl: 'Order → Trade → Allocation → Security → Position → Transact → Cash', row: 'The lifecycle, end to end',
     body: `<div class="timeline">${ev.map(e => `<div><b>${esc(dt(e[0]))}</b> ${esc(e[1])}</div>`).join('')}</div>`,
-    tech: tech('Full lifecycle join', '', "SELECT o.Order_Id, t.Trade_Id, ta.Portfolio_Key, s.ShortName, tr.TransactKey, ce.Cash_Entry_Id, ce.Net_Cash_Amount\nFROM dbo.[Order] o\nJOIN dbo.Order_Allocation oa ON oa.Order_Key = o.Order_Key\nJOIN dbo.Trade t             ON t.Trade_Key  = oa.Trade_Key\nJOIN dbo.Trade_Allocation ta ON ta.Order_Allocation_Key = oa.Order_Allocation_Key AND ta.Is_Current = 'true'\nJOIN dbo.Security s          ON s.SecurityKey = t.Security_Key\nJOIN dbo.Transact tr         ON tr.TradeAllocationKey = ta.Trade_Allocation_Key\nLEFT JOIN dbo.Cash_Entry ce  ON ce.Transact_Key = tr.TransactKey\nWHERE o.Order_Id = '" + B.O.OrderId + "';")});
+    tech: tech('Order → Order_Allocation → Trade → Trade_Allocation (Is_Current = 1) → Transact, matched on portfolio + security + trade date + quantity + buy/sell → Cash_Entry.Transact_Key')});
   { const take = id => P.splice(P.findIndex(p => p.id === id), 1)[0];
     const h = take('household'); h.g = 1; P.splice(P.findIndex(p => p.id === 'meet') + 1, 0, h);
     const t = take('tree'); P.splice(P.map(p => p.g).lastIndexOf(1) + 1, 0, t); }
@@ -685,7 +1378,6 @@ function drawSim() { const box = document.getElementById('sim'); if (box) box.in
 
 // ---------- Meet Abraham: interactive relationship builder ----------
 let meet = {scene: 0, perm: null, kind: 'household'}, meetPermScene = 6, meetLast = 7;
-const PERM = {decide: ['Make investment decisions', ['OWN', 'COOWN', 'TRS', 'POA']], sign: ['Sign on the owner\'s behalf', ['POA', 'TRS']], reports: ['Receive statements', ['OWN', 'COOWN', 'TRS', 'ACT']], benefit: ['Benefit from the money', ['OWN', 'COOWN', 'BEN']]};
 function meetHtml() {
   if (meet.kind !== cur.kind) { meet = {scene: 0, perm: null, kind: cur.kind}; }
   const hh = cur.kind === 'household';
@@ -708,7 +1400,7 @@ function meetHtml() {
       {t: `The family becomes a client: ${cl.Name}`, x: `In the firm's books the relationship is one client, ${cl.Name} (${cl.Code}). There are now three participants: the firm, the advisors and the client.`, m: 'The client is the legal relationship that owns the accounts.', links: [['client', 'Open the client page']]},
       {t: 'The client belongs to a household', x: `The firm groups everyone connected to the family into the "${s.household.HouseholdName}": Abraham (Head), Sarah (Spouse), Isaac (Son) and the family trust. The family reaches further: Isaac also heads his own household with Rebekah, and Abraham holds power of attorney in Hagar & Ishmael's.`, m: 'A household groups everyone connected to one family. One person can belong to several households, so FinIn records membership in Household_Member instead of copying the person.', links: [['household', 'Open the household page']]},
       {t: 'Three owners stand behind the client', x: `Inside the household, three parties stand behind the client: Abraham is the owner, Sarah is the co-owner, and the Abraham Family Trust holds the trust's money. Isaac belongs to the household but does not own this money.`, m: 'The client is owned by its owners; other household members can be linked without owning anything.', links: [['client', 'Open the client page'], ['people', 'Open the people page']]},
-      {t: 'Everyone has a different role', x: `Not everyone involved has the same authority. Abraham owns money and makes investment decisions. Sarah is a trustee and can sign for Abraham on his IRA. Isaac is the trust's beneficiary. Amanda Roberts, the accountant, only receives reports. Pick a permission to see who has it.`, m: 'A client can have many contacts, and each contact can have different roles, responsibilities and permissions.', links: [['people', 'Open the people page']], perm: 1},
+      {t: 'Everyone has a different role', x: `Not everyone involved has the same authority. Abraham owns money and makes investment decisions. Sarah is a trustee and can sign for Abraham on his IRA. Isaac is the trust's beneficiary. Amanda Roberts, the accountant, only receives reports. Pick a permission to see who has it.`, m: 'A client can have many contacts, and each contact can have different roles, responsibilities and permissions.', links: [['roles', 'Open the roles page'], ['people', 'Open the people page']], perm: 1},
       {t: 'Next, the family opens accounts', x: `With the relationship set up, the family opens three accounts at ${custOf(s.accounts[0])} and the firm starts investing. Follow one trade from order to cash.`, links: [['accounts', 'See their accounts'], ['order', 'Follow the first trade']]}
     ];
     levels = [
@@ -729,7 +1421,7 @@ function meetHtml() {
       {t: 'The firm assigns one advisor', x: `${advs[0]} becomes Emily's advisor and her single point of contact. A smaller relationship needs only one advisor.`, m: 'The investment firm employs advisors, and those advisors manage relationships with clients.', links: [['portfolios', 'The portfolio her advisor runs']]},
       {t: `Emily becomes a client: ${cl.Code}`, x: `In the firm's books the relationship is one client, ${cl.Name} (${cl.Code}). Here the client and the person are the same: Emily alone owns the money.`, m: 'The client is the legal relationship that owns the accounts. For a single client it maps to exactly one person.', links: [['client', 'Open the client page']]},
       {t: 'No household is needed', x: `Emily has no spouse, children or trust connected to her money, so the firm does not create a household. Her contact simply has no household key, and her story continues straight from the person to the account.`, m: 'A household is optional. It is only created when several people or entities need to be seen and advised together.', links: [['household', 'Open the household page']]},
-      {t: 'One person, one role', x: `Emily is the owner of her portfolio and the only person on it. She makes the decisions, receives the statements and benefits from the money. Pick a permission to check: Emily has every one that an owner holds.`, m: 'Even with one person, FinIn records the role in Contact_Account, so the same rules work for every client.', links: [['people', 'Open the people page']], perm: 1},
+      {t: 'One person, one role', x: `Emily is the owner of her portfolio and the only person on it. She makes the decisions, receives the statements and benefits from the money. Pick a permission to check: Emily has every one that an owner holds.`, m: 'Even with one person, FinIn records the role in Contact_Account, so the same rules work for every client.', links: [['roles', 'Open the roles page']], perm: 1},
       {t: 'Next, Emily opens an account', x: `Emily opens one taxable account, ${a.AccountId}, at ${custOf(a)}. It is invested in ${p.PortfolioCode} ${p.LongName}. Follow her first trade, a euro stock purchase, from order to cash.`, links: [['accounts', 'See her account'], ['order', 'Follow her first trade']]}
     ];
     levels = [
@@ -765,6 +1457,8 @@ function drawBench() {
   const x = v => ((v - lo) / (hi - lo) * 100).toFixed(2);
   box.innerHTML = rows.map(r => `<div class="rowv"><span><b>${esc(r.c)}</b><br><span class="muted" style="font-size:14px">${esc(r.n)}</span></span><div class="track"><div class="ax"></div><div class="lnk" style="left:${x(Math.min(r.v, r.b))}%;width:${(x(Math.max(r.v, r.b)) - x(Math.min(r.v, r.b))).toFixed(2)}%"></div><div class="pt b" style="left:${x(r.b)}%"></div><div class="pt p" style="left:${x(r.v)}%"></div></div><span class="v" style="color:${r.v >= r.b ? '#2f8a64' : '#b5506a'}">${pct(r.v)} vs ${pct(r.b)}</span></div>`).join('');
 }
+const qblock = q => `<div class="qb"><div class="qh">${esc(q.t)}<button class="cpy" data-copy>Copy</button></div>${q.note ? `<div class="qnote">${esc(q.note)}</div>` : ''}<pre>${esc(q.sql)}</pre></div>`;
+const techQ = c => (c.tech || '').replace('<!--Q-->', c.q && c.q.length ? `<p class="cap" style="margin-top:16px">Queries for this page</p><div class="qnote">Run on the SQL analytics endpoint of the Silver Lakehouse FININ_DE_LH_BRONZE_AND_SILVER, schema dbo.</div>${c.q.map(qblock).join('')}` : '');
 function render() {
   const list = PG[cur.kind].P, c = list[cur.i], n = list.length;
   document.body.dataset.g = c.g;
@@ -777,7 +1471,7 @@ function render() {
     <div class="prog"><span>Page ${cur.i + 1} of ${n}</span><div class="bar"><i style="width:${((cur.i + 1) / n * 100).toFixed(1)}%"></i></div><span>${esc(GROUPS[c.g])}</span></div>
     <div class="kick">${esc(c.name)}</div><h2>${esc(c.title)}</h2>
     <div class="story">${c.story}</div>
-    ${c.sim ? '<div id="sim"></div>' : c.custom ? c.body : `${c.pre || ''}<div class="what"><span class="t">${esc(c.tbl)}</span></div>${c.body}${c.post || ''}${c.tech}`}
+    ${c.sim ? '<div id="sim"></div>' : c.custom ? c.body + techQ(c) : `${c.pre || ''}<div class="what"><span class="t">${esc(c.tbl)}</span></div>${c.body}${c.post || ''}${techQ(c)}`}
     <div class="pager">${prev ? `<button data-i="${cur.i - 1}"><small>Previous</small><strong>${esc(prev.name)}</strong></button>` : '<span></span>'}${next ? `<button class="nx" data-i="${cur.i + 1}"><small>Next</small><strong>${esc(next.name)}</strong></button>` : `<button class="nx" data-go="${cur.kind === 'household' ? 'single' : 'household'}"><small>Next client</small><strong>${cur.kind === 'household' ? 'Emily Carter' : 'The Abraham family'}</strong></button>`}</div>`;
   document.querySelectorAll('.seg [data-go]').forEach(b => b.setAttribute('aria-pressed', b.dataset.go === cur.kind));
   const on = document.querySelector('.chips .on'); if (on) on.scrollIntoView({block: 'nearest', inline: 'center'});
@@ -818,6 +1512,7 @@ document.addEventListener('click', e => {
     }
     drawSim(); return;
   }
+  const cp = t.closest('[data-copy]'); if (cp) { const txt = cp.closest('.qb').querySelector('pre').textContent; const done = () => { cp.textContent = 'Copied'; setTimeout(() => cp.textContent = 'Copy', 1500); }; try { navigator.clipboard.writeText(txt).then(done, () => {}); } catch (err) {} return; }
   const pr = t.closest('#per button'); if (pr) { document.querySelectorAll('#per button').forEach(b => b.setAttribute('aria-pressed', b === pr)); drawBench(); return; }
   if (t.closest('[data-out]')) { user = null; store.set('finin-user', null); location.hash = 'login'; show(); }
 });
